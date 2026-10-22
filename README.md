@@ -1,0 +1,36 @@
+# Расширенное администрирование Astra Linux SE 1.7
+
+Учебные материалы по расширенному администрированию ОС Astra Linux Special Edition 1.7: загрузка и системные службы, управление программным обеспечением, хранение данных, журналирование, настройка сети, диагностика и автоматизация административных задач.
+
+## Модуль 1
+
+Загрузка системы, управление устройствами и программным обеспечением.
+
+В каталоге [Mod 1/AI](Mod%201/AI/) размещены дополнительные материалы по работе с ИИ-ассистентами: ссылка на Qwen, вводная инструкция, препромпты и пример запроса для создания ассистента.
+
+## Материалы по ИИ
+
+| Файл | Описание |
+| --- | --- |
+| [qwen.md](Mod%201/AI/qwen.md) | Ссылка на веб-интерфейс Qwen. |
+| [intro_part_in_ai_assist.md](Mod%201/AI/intro_part_in_ai_assist.md) | Короткая инструкция для обращения к постоянным правилам проекта. |
+| [data_systems_intelligence_architect_preprompt.md](Mod%201/AI/data_systems_intelligence_architect_preprompt.md) | Препромпт ассистента по анализу данных, системному анализу и проектированию промптов. |
+| [example_promt_to_create_pm_assist_in_prompt_gen_assist.md](Mod%201/AI/example_promt_to_create_pm_assist_in_prompt_gen_assist.md) | Пример запроса на преобразование исходного препромпта в ассистента руководителя проектов. |
+| [AI_preprompt_reengineering_generator.md](Mod%201/AI/AI_preprompt_reengineering_generator.md) | Инструкция для ассистента по переработке препромптов под новую специализацию. |
+| [pm_architect_preprompt.md](Mod%201/AI/pm_architect_preprompt.md) | Готовый препромпт ассистента руководителя проектов PM Architect. |
+
+## Как использовать
+
+1. Выберите файл под свою задачу и изучите его содержание.
+2. Добавьте выбранный препромпт в инструкции ИИ-ассистента или в файлы проекта, если используемый сервис поддерживает такой способ работы.
+3. В вводной инструкции замените `НАЗВАНИЕ_ФАЙЛА.md` на имя фактически добавленного файла.
+4. В примере запроса на создание PM-ассистента указан исходный файл `AI_assist_preprompt.md`. Он не входит в этот набор: перед использованием укажите имя своего исходного препромпта и добавьте его в проект.
+
+ИИ-материалы являются дополнительными примерами и не заменяют документацию Astra Linux. Команды и сценарии, полученные от ассистента, проверяйте на учебной виртуальной машине перед применением.
+
+## Источники
+
+Шесть файлов в `Mod 1/AI` скопированы с сохранением исходных имён и содержимого:
+
+- [Fundamentals_of_information_security — Prompts_first_AI_use_case](https://github.com/q10sn1k/Fundamentals_of_information_security/tree/main/item_2/Prompts_first_AI_use_case): `qwen.md`, `intro_part_in_ai_assist.md`, `data_systems_intelligence_architect_preprompt.md`.
+- [DA_MAY_2026 — item_8](https://github.com/q10sn1k/DA_MAY_2026/tree/main/item_8): `example_promt_to_create_pm_assist_in_prompt_gen_assist.md`, `AI_preprompt_reengineering_generator.md`, `pm_architect_preprompt.md`.
