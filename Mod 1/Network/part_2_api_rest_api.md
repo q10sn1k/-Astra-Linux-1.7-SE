@@ -555,7 +555,7 @@ DELETE /v1/orders/501
 
 ## 7.6. HEAD — получить заголовки без тела
 
-`HEAD` похож на `GET`, но сервер обычно не возвращает тело ответа.
+`HEAD` похож на `GET`, но сервер не должен возвращать тело ответа.
 
 Его можно использовать, чтобы проверить:
 
@@ -660,7 +660,7 @@ print("Заголовок:", data["title"])  # Выводим значение �
 | `response.content` | тело как байты |
 | `response.json()` | попытка разобрать JSON |
 | `response.url` | итоговый URL запроса |
-| `response.elapsed` | время до получения ответа |
+| `response.elapsed` | время до получения заголовков, без загрузки тела |
 | `response.raise_for_status()` | исключение при ошибочном HTTP-статусе |
 
 Пример диагностики:
@@ -674,7 +674,7 @@ response = requests.get(url, timeout=10)  # Выполняем запрос с �
 print("Запрошенный URL:", response.url)  # Показываем итоговый адрес с учётом параметров и перенаправлений.
 print("Код:", response.status_code)  # Показываем HTTP-код ответа.
 print("Успешность:", response.ok)  # Показываем упрощённый логический признак успешности.
-print("Время ответа:", response.elapsed.total_seconds())  # Переводим время ответа в секунды.
+print("Время до получения заголовков:", response.elapsed.total_seconds())  # Выводим время в секундах без загрузки тела ответа.
 print("Заголовки:", dict(response.headers))  # Преобразуем заголовки ответа в обычный словарь для просмотра.
 ```
 
@@ -1073,7 +1073,7 @@ print("Тело ответа:", response.text)  # Показываем тело,
 | 304 | Not Modified | можно использовать кэшированное представление |
 | 400 | Bad Request | запрос некорректен |
 | 401 | Unauthorized | нет корректной аутентификации |
-| 403 | Forbidden | доступ запрещён даже после определения клиента |
+| 403 | Forbidden | сервер понял запрос, но отказывает в его выполнении |
 | 404 | Not Found | ресурс или endpoint не найден |
 | 405 | Method Not Allowed | метод не разрешён для endpoint |
 | 409 | Conflict | операция конфликтует с текущим состоянием |
@@ -1090,7 +1090,7 @@ print("Тело ответа:", response.text)  # Показываем тело,
 Упрощённо:
 
 - `401` — сервер не получил корректные данные для определения и проверки клиента;
-- `403` — сервер понял, кто выполняет запрос, но операция этому клиенту не разрешена.
+- `403` — сервер понял запрос, но отказывает в выполнении; успешная аутентификация не обязательна.
 
 Реальное поведение зависит от политики API. Некоторые системы намеренно возвращают `404`, чтобы не раскрывать существование защищённого ресурса.
 
@@ -1148,7 +1148,7 @@ except requests.exceptions.ConnectionError:  # Обрабатываем DNS-ош
     print("Не удалось установить сетевое соединение с API.")  # Выводим сообщение о проблеме соединения.
 except requests.exceptions.HTTPError as error:  # Обрабатываем ошибочный HTTP-статус.
     print("API вернул ошибочный HTTP-статус:", error)  # Показываем сведения об HTTP-ошибке без сокрытия причины.
-except requests.exceptions.JSONDecodeError:  # Обрабатываем ситуацию, когда тело не является корректным JSON.
+except ValueError:  # Обрабатываем ошибку разбора JSON, в том числе в старых версиях Requests.
     print("Ответ получен, но его не удалось разобрать как JSON.")  # Выводим сообщение об ошибке формата ответа.
 ```
 
@@ -1175,12 +1175,12 @@ except requests.exceptions.JSONDecodeError:  # Обрабатываем ситу
 ## 16.4. Функция для безопасного GET-запроса
 
 ```python
-from typing import Any  # Импортируем тип Any для обозначения произвольной структуры JSON.
+from typing import Any, Dict, Optional  # Импортируем типы для JSON и необязательных параметров.
 
 import requests  # Импортируем библиотеку requests.
 
 
-def get_json(url: str, params: dict[str, Any] | None = None) -> Any:  # Объявляем функцию получения JSON по URL с необязательными параметрами.
+def get_json(url: str, params: Optional[Dict[str, Any]] = None) -> Any:  # Объявляем функцию получения JSON по URL с необязательными параметрами.
     response = requests.get(url, params=params, timeout=10)  # Выполняем GET-запрос с параметрами и тайм-аутом.
     response.raise_for_status()  # Проверяем, что сервер не вернул статус 4xx или 5xx.
     return response.json()  # Возвращаем разобранное JSON-тело вызывающему коду.
@@ -1378,9 +1378,9 @@ url = "https://jsonplaceholder.typicode.com/posts/1"  # Указываем ад�
 response = requests.get(url, timeout=10)  # Выполняем GET-запрос с тайм-аутом.
 response.raise_for_status()  # Проверяем HTTP-статус ответа.
 
-content_type = response.headers.get("Content-Type", "")  # Получаем Content-Type или пустую строку, если заголовок отсутствует.
+content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()  # Получаем media type без параметров и приводим к нижнему регистру.
 
-if "application/json" not in content_type.lower():  # Проверяем, что сервер заявил JSON-содержимое.
+if content_type != "application/json" and not (content_type.startswith("application/") and content_type.endswith("+json")):  # Проверяем JSON, включая типы с суффиксом +json.
     raise ValueError(f"Ожидался JSON, получен Content-Type: {content_type}")  # Останавливаем обработку при неожиданном формате.
 
 data = response.json()  # Разбираем тело как JSON после проверки типа содержимого.
@@ -1468,14 +1468,14 @@ GET /v1/orders?cursor=eyJpZCI6NTAwfQ==
 Следующий код является шаблоном. Названия `page`, `limit` и структура ответа должны быть адаптированы под документацию API.
 
 ```python
-from typing import Any  # Импортируем тип Any для произвольных JSON-объектов.
+from typing import Any, Dict, List  # Импортируем типы для списка JSON-объектов.
 
 import requests  # Импортируем библиотеку requests.
 
 base_url = "https://api.example.com/v1/items"  # Указываем условный endpoint коллекции.
 page = 1  # Начинаем с первой страницы.
 page_size = 100  # Запрашиваем до ста объектов на одной странице.
-all_items: list[dict[str, Any]] = []  # Создаём список для накопления объектов со всех страниц.
+all_items: List[Dict[str, Any]] = []  # Создаём список для накопления объектов со всех страниц.
 
 while True:  # Запускаем цикл последовательного получения страниц.
     params = {  # Формируем параметры текущей страницы.
@@ -1487,7 +1487,7 @@ while True:  # Запускаем цикл последовательного п
     response.raise_for_status()  # Проверяем HTTP-статус ответа.
 
     payload = response.json()  # Преобразуем JSON-ответ в объект Python.
-    items = payload.get("items", [])  # Получаем список items или пустой список при отсутствии поля.
+    items = payload["items"]  # Получаем обязательное поле items, не скрывая ошибку его отсутствия.
 
     if not isinstance(items, list):  # Проверяем, что поле items действительно содержит список.
         raise TypeError("Поле items должно быть списком.")  # Останавливаем обработку при нарушении контракта.
@@ -1507,16 +1507,16 @@ print("Всего получено объектов:", len(all_items))  # Пок
 ## 21.7. Пример cursor pagination
 
 ```python
-from typing import Any  # Импортируем тип Any для произвольных JSON-объектов.
+from typing import Any, Dict, List, Optional  # Импортируем типы для JSON-объектов и необязательного курсора.
 
 import requests  # Импортируем библиотеку requests.
 
 base_url = "https://api.example.com/v1/items"  # Указываем условный endpoint с cursor pagination.
-cursor: str | None = None  # До первого запроса курсор отсутствует.
-all_items: list[dict[str, Any]] = []  # Создаём список для накопления всех объектов.
+cursor: Optional[str] = None  # До первого запроса курсор отсутствует.
+all_items: List[Dict[str, Any]] = []  # Создаём список для накопления всех объектов.
 
 while True:  # Запускаем цикл получения страниц по курсору.
-    params = {"limit": 100}  # Задаём размер одной страницы.
+    params: Dict[str, Any] = {"limit": 100}  # Задаём параметры страницы с числовыми и строковыми значениями.
 
     if cursor is not None:  # Проверяем, был ли получен курсор следующей страницы.
         params["cursor"] = cursor  # Добавляем курсор в параметры следующего запроса.
@@ -1525,7 +1525,7 @@ while True:  # Запускаем цикл получения страниц п�
     response.raise_for_status()  # Проверяем HTTP-статус ответа.
 
     payload = response.json()  # Разбираем JSON-ответ.
-    items = payload.get("items", [])  # Получаем список объектов текущей страницы.
+    items = payload["items"]  # Получаем обязательный список объектов текущей страницы.
     cursor = payload.get("next_cursor")  # Получаем курсор следующей страницы.
 
     if not isinstance(items, list):  # Проверяем тип поля items.
@@ -1573,7 +1573,7 @@ Retry-After: 30
 
 ```python
 import time  # Импортируем time для ожидания между повторными попытками.
-
+from email.utils import parsedate_to_datetime  # Импортируем разбор HTTP-даты для Retry-After.
 import requests  # Импортируем библиотеку requests.
 
 url = "https://api.example.com/v1/items"  # Указываем условный endpoint для безопасного GET-запроса.
@@ -1583,13 +1583,13 @@ for attempt in range(1, max_attempts + 1):  # Последовательно в�
     response = requests.get(url, timeout=10)  # Отправляем GET-запрос с тайм-аутом.
 
     if response.status_code == 429:  # Проверяем, не превышен ли rate limit.
-        retry_after = response.headers.get("Retry-After", "1")  # Получаем рекомендуемое время ожидания или используем одну секунду.
-
-        if retry_after.isdigit():  # Проверяем, что Retry-After содержит целое число секунд.
-            wait_seconds = min(int(retry_after), 60)  # Ограничиваем ожидание шестьюдесятью секундами в демонстрационном скрипте.
-        else:  # Обрабатываем другой формат Retry-After без разбора HTTP-даты.
-            wait_seconds = 1  # Используем короткое безопасное ожидание для примера.
-
+        retry_after = response.headers.get("Retry-After", "1").strip()  # Получаем время ожидания или используем одну секунду.
+        if retry_after.isascii() and retry_after.isdigit():  # Проверяем, что Retry-After содержит целое число секунд.
+            wait_seconds = int(retry_after)  # Сохраняем указанную сервером паузу без сокращения.
+        else:  # Обрабатываем Retry-After в формате HTTP-даты.
+            wait_seconds = max(0, parsedate_to_datetime(retry_after).timestamp() - time.time())  # Вычисляем оставшуюся паузу.
+        if wait_seconds > 60 or attempt == max_attempts:  # Проверяем лимит ожидания и наличие следующей попытки.
+            response.raise_for_status()  # Завершаем с HTTP-ошибкой вместо преждевременного повтора или лишней паузы.
         print(f"Rate limit. Повтор через {wait_seconds} сек.")  # Сообщаем причину и время ожидания.
         time.sleep(wait_seconds)  # Приостанавливаем программу перед следующей попыткой.
         continue  # Переходим к следующей итерации цикла.
@@ -2380,7 +2380,7 @@ except requests.exceptions.ConnectionError:  # Обрабатываем проб
     print("Не удалось подключиться к API.")  # Выводим сообщение о сетевой проблеме.
 except requests.exceptions.HTTPError as error:  # Обрабатываем ошибочный HTTP-статус.
     print("API вернул HTTP-ошибку:", error)  # Показываем сведения об ошибке.
-except requests.exceptions.JSONDecodeError:  # Обрабатываем некорректный JSON.
+except ValueError:  # Обрабатываем ошибку разбора JSON независимо от версии Requests.
     print("Ответ API не является корректным JSON.")  # Сообщаем о проблеме формата.
 else:  # Переходим к обработке данных только после успешного запроса.
     if not isinstance(records, list):  # Проверяем, что верхний уровень JSON является списком.
