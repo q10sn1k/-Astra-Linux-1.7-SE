@@ -27,10 +27,3 @@
 4. В примере запроса на создание PM-ассистента указан исходный файл `AI_assist_preprompt.md`. Он не входит в этот набор: перед использованием укажите имя своего исходного препромпта и добавьте его в проект.
 
 ИИ-материалы являются дополнительными примерами и не заменяют документацию Astra Linux. Команды и сценарии, полученные от ассистента, проверяйте на учебной виртуальной машине перед применением.
-
-## Источники
-
-Шесть файлов в `Mod 1/AI` скопированы с сохранением исходных имён и содержимого:
-
-- [Fundamentals_of_information_security — Prompts_first_AI_use_case](https://github.com/q10sn1k/Fundamentals_of_information_security/tree/main/item_2/Prompts_first_AI_use_case): `qwen.md`, `intro_part_in_ai_assist.md`, `data_systems_intelligence_architect_preprompt.md`.
-- [DA_MAY_2026 — item_8](https://github.com/q10sn1k/DA_MAY_2026/tree/main/item_8): `example_promt_to_create_pm_assist_in_prompt_gen_assist.md`, `AI_preprompt_reengineering_generator.md`, `pm_architect_preprompt.md`.
