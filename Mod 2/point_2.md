@@ -29,6 +29,10 @@
 
 Переменные и функции ниже живут в текущем сеансе Bash. Образ, loop-связь и монтирование не исчезают при разрыве SSH. В части 2 предусмотрено восстановление состояния без повторного форматирования.
 
+**Как проходить материал.** Сначала выполните проверки части 1. Установку пакетов выполняйте только при отсутствии нужных программ, загрузку модуля — только если XFS ещё не поддерживается текущим ядром. Затем в части 2 идите по разделам 1–10, сохраните результат по разделу 11 и завершите работу по разделу 13. Раздел 12 нужен только после разрыва SSH, раздел 14 — при ошибках. Их не требуется выполнять подряд как обычные шаги.
+
+Если блок содержит несколько строк, они выполняются последовательно. Ошибка одной обычной команды сама по себе не отменяет следующие строки. Поэтому зависимые изменения ниже объединены через `&&` и условия. При сообщении `STOP` или неожиданной ошибке следующий блок не запускайте; повторный запуск `mkfs.xfs` не является способом продолжить прерванную практику.
+
 #### 1.1. Подтвердите ОС, пользователя и оболочку
 
 ```bash
@@ -739,12 +743,17 @@ SOURCE       TARGET               FSTYPE OPTIONS
 
 ```bash
 xfs_check_mount() {
-    local source fstype
+    local source fstype options
     xfs_check_device || return 1
     source="$(findmnt --noheadings --raw --mountpoint "$XFS_MNT" --output SOURCE)" || return 1
     fstype="$(findmnt --noheadings --raw --mountpoint "$XFS_MNT" --output FSTYPE)" || return 1
+    options="$(findmnt --noheadings --raw --mountpoint "$XFS_MNT" --output OPTIONS)" || return 1
     if [[ "$source" != "$XFS_PART" || "$fstype" != xfs ]]; then
         printf '%s\n' 'STOP: expected XFS is not mounted at the training path.' >&2
+        return 1
+    fi
+    if [[ ",$options," != *,noatime,* ]]; then
+        printf '%s\n' 'STOP: noatime is absent from the actual mount options.' >&2
         return 1
     fi
     printf '%s\n' "OK: $XFS_MNT is XFS from $XFS_PART"
@@ -752,7 +761,9 @@ xfs_check_mount() {
 xfs_check_mount
 ```
 
-Функция сначала проверяет устройство, затем точный источник и тип монтирования. `local` ограничивает временные переменные вызовом функции. `findmnt --noheadings --raw` убирает заголовок и выравнивание; `--mountpoint` выбирает точный каталог, `--output` — нужное поле. `|| return 1` останавливает функцию при ошибке. `!=` означает неравенство, `>&2` — поток ошибок.
+Функция сначала проверяет устройство, затем точный источник, тип и действующие параметры монтирования. `local` ограничивает временные переменные вызовом функции. `findmnt --noheadings --raw` убирает заголовок и выравнивание; `--mountpoint` выбирает точный каталог, `--output` — нужное поле. `|| return 1` останавливает функцию при ошибке. `!=` означает неравенство, `>&2` — поток ошибок.
+
+Шаблон `*,noatime,*` проверяет наличие целого параметра в списке. Звёздочка означает произвольный текст; запятые, добавленные вокруг списка, позволяют одинаково проверить первый, средний и последний параметр. Если `noatime` нет, функция не разрешает продолжить учебную запись. Настройка в файле сама по себе недостаточна: здесь проверяется фактическое монтирование.
 
 **Пример результата:**
 
@@ -821,9 +832,8 @@ drwxrws--- 2 student student ... /mnt/astra-xfs-1000/records
 ```bash
 xfs_check_mount && (
     umask 0007
-    printf '%s\n' 'Training record 001' 'No real laboratory data are stored here.' > "$XFS_MNT/records/journal.txt"
-    cd "$XFS_MNT/records"
-    sha256sum journal.txt > SHA256SUMS
+    printf '%s\n' 'Training record 001' 'No real laboratory data are stored here.' > "$XFS_MNT/records/journal.txt" &&
+    sha256sum "$XFS_MNT/records/journal.txt" > "$XFS_MNT/records/SHA256SUMS"
 )
 cat "$XFS_MNT/records/journal.txt"
 ls -l "$XFS_MNT/records"
@@ -833,7 +843,7 @@ ls -l "$XFS_MNT/records"
 
 `umask 0007` убирает все права остальных пользователей у вновь создаваемых объектов. Для обычного файла с исходным режимом `0666` получится `0660`: чтение и запись владельцу и группе. Наследуемая группа берётся от каталога с setgid.
 
-`printf '%s\n'` записывает две строки. `>` создаёт или перезаписывает только названный учебный файл. `cd` меняет каталог внутри подоболочки. `sha256sum` вычисляет SHA-256 и сохраняет относительное имя вместе с суммой в `SHA256SUMS`. `cat` читает журнал, `ls -l` показывает права файлов.
+`printf '%s\n'` записывает две строки. `>` создаёт или перезаписывает только названный учебный файл. `&&` допускает расчёт суммы только после успешной записи. `sha256sum` вычисляет SHA-256 и сохраняет полный путь вместе с суммой в `$XFS_MNT/records/SHA256SUMS`. Переходить в другой каталог не нужно: оба пути заданы явно. `cat` читает журнал, `ls -l` показывает права файлов.
 
 **Пример результата:**
 
@@ -856,12 +866,14 @@ total ...
 #### 8.1. Установите старое время доступа и сохраните значение
 
 ```bash
-xfs_check_mount && touch -a -t 200001010000 "$XFS_MNT/records/journal.txt"
-stat -c 'atime=%x | mtime=%y | ctime=%z' "$XFS_MNT/records/journal.txt"
-XFS_ATIME_BEFORE="$(stat -c '%X' "$XFS_MNT/records/journal.txt")"
+XFS_ATIME_BEFORE=""
+if xfs_check_mount && touch -a -t 200001010000 "$XFS_MNT/records/journal.txt"; then
+    stat -c 'atime=%x | mtime=%y | ctime=%z' "$XFS_MNT/records/journal.txt" &&
+    XFS_ATIME_BEFORE="$(stat -c '%X' "$XFS_MNT/records/journal.txt")"
+fi
 ```
 
-`touch -a` меняет только отметку доступа; `-t 200001010000` задаёт 1 января 2000 года, 00:00 в часовом поясе сервера. Эта явная установка разрешена и при `noatime`: параметр запрещает автоматическое обновление при доступе, а не ручное изменение отметки.
+Первая строка очищает прежнее сохранённое значение, чтобы не использовать его после ошибки повторного запуска. `if` разрешает получение новой отметки только после проверки монтирования и успешного `touch`. `touch -a` меняет только отметку доступа; `-t 200001010000` задаёт 1 января 2000 года, 00:00 в часовом поясе сервера. Эта явная установка разрешена и при `noatime`: параметр запрещает автоматическое обновление при доступе, а не ручное изменение отметки.
 
 `stat` показывает свойства файла. `-c` задаёт формат. `%x` — время доступа, `%y` — изменения содержимого, `%z` — изменения состояния inode. Символы `|` находятся в кавычках и являются частью текста, а не конвейерами. `%X` возвращает время доступа как целое число секунд с начала эпохи Unix. Подстановка сохраняет это число в переменной.
 
@@ -878,23 +890,28 @@ atime=2000-01-01 00:00:00.000000000 ... | mtime=... | ctime=...
 #### 8.2. Прочитайте файл и сравните отметки
 
 ```bash
-cat "$XFS_MNT/records/journal.txt" > /dev/null
-XFS_ATIME_AFTER="$(stat -c '%X' "$XFS_MNT/records/journal.txt")"
-printf 'before=%s\nafter=%s\n' "$XFS_ATIME_BEFORE" "$XFS_ATIME_AFTER"
-if [[ -n "$XFS_ATIME_BEFORE" && "$XFS_ATIME_BEFORE" = "$XFS_ATIME_AFTER" ]]; then
-    printf '%s\n' 'OK: reading did not update atime.'
+if xfs_check_mount && cat "$XFS_MNT/records/journal.txt" > /dev/null; then
+    XFS_ATIME_AFTER="$(stat -c '%X' "$XFS_MNT/records/journal.txt")"
+    printf 'before=%s\nafter=%s\n' "$XFS_ATIME_BEFORE" "$XFS_ATIME_AFTER"
+    if [[ -n "$XFS_ATIME_BEFORE" && "$XFS_ATIME_BEFORE" = "$XFS_ATIME_AFTER" ]]; then
+        printf '%s\n' 'OK: reading did not update atime.'
+    else
+        printf '%s\n' 'STOP: the timestamps differ or the initial timestamp is missing.'
+    fi
 else
-    printf '%s\n' 'STOP: check the actual mount options and background access.'
+    printf '%s\n' 'STOP: mount verification or file reading failed.'
 fi
 ```
 
-`cat` читает файл полностью. `> /dev/null` убирает его содержимое с экрана, но чтение выполняется. `stat -c '%X'` снова получает отметку, `printf` показывает оба значения.
+`if` сначала требует успешной проверки монтирования и чтения файла. `cat` читает файл полностью. `> /dev/null` убирает его содержимое с экрана, но чтение выполняется. Если чтение не удалось, сообщение об успешном опыте не выводится. `stat -c '%X'` снова получает отметку, `printf` показывает оба значения.
 
 `-n` в условии требует непустую исходную отметку, `&&` требует успеха обеих проверок, а `=` сравнивает строки с числовыми отметками. При равенстве непустых значений печатается `OK`; при отличии или отсутствии результата нужно проверить реальное монтирование и возможные действия других процессов.
 
 **Пример результата:**
 
 ```text
+OK: ...
+OK: ...
 before=<число секунд>
 after=<то же число секунд>
 OK: reading did not update atime.
@@ -986,20 +1003,39 @@ Training filesystem is unmounted.
 #### 10.2. Отключите связь с образом
 
 ```bash
-if findmnt --noheadings --source "$XFS_PART"; then
-    printf '%s\n' 'STOP: the training partition is still mounted.'
-else
-    xfs_check_device && sudo losetup --detach "$XFS_LOOP"
-fi
+xfs_check_unmounted() {
+    xfs_check_device || return 1
+    if ! findmnt --kernel --list --noheadings --output TARGET > /dev/null; then
+        printf '%s\n' 'STOP: the kernel mount table could not be read.' >&2
+        return 1
+    fi
+    if findmnt --noheadings --source "$XFS_PART" || mountpoint -q "$XFS_MNT"; then
+        printf '%s\n' 'STOP: the training partition or path is still mounted.' >&2
+        return 1
+    fi
+    printf '%s\n' 'OK: the training partition and path are unmounted.'
+}
+```
+
+Функция `xfs_check_unmounted` проверяет, что устройство принадлежит образу и больше не используется для монтирования. Она понадобится и при завершении практики. Её определяют один раз в текущем сеансе; после нового подключения образа она использует обновлённые переменные.
+
+`findmnt --kernel` читает таблицу ядра, `--list` выбирает список, `--noheadings` убирает заголовок, `--output TARGET` оставляет точки. `> /dev/null` скрывает список. Если таблицу вообще нельзя прочитать, функция останавливается: ошибку чтения нельзя принимать за отсутствие монтирования.
+
+Следующая `findmnt --source` ищет наш раздел, а `mountpoint -q` тихо проверяет нашу точку. `||` означает, что достаточно одного обнаруженного использования для остановки. `!` отрицает результат, `return 1` возвращает ошибку, `>&2` направляет сообщение в поток ошибок.
+
+**Ожидаемый результат этого блока:** определения функции обычно не печатают текст; приглашение Bash появляется снова. Отключение ещё не выполнялось. Теперь вызовите проверку и отключите устройство:
+
+```bash
+xfs_check_unmounted && sudo losetup --detach "$XFS_LOOP"
 sudo udevadm settle --timeout=10
 sudo losetup --associated "$XFS_IMAGE"
 ```
 
-`findmnt --source` ищет монтирования нашего раздела, `--noheadings` убирает заголовок. При найденном монтировании выполняется только сообщение об остановке.
+`&&` допускает отключение только после успешной проверки. При `STOP` дальнейшую работу с образом не продолжайте.
 
 `losetup --detach` отключает одно проверенное устройство. `udevadm settle --timeout=10` ожидает события. `losetup --associated` перечисляет связи только нашего образа.
 
-**Ожидаемый результат:** строка `OK` проверки устройства, а последняя команда — без вывода. Если связь осталась, не продолжайте новое подключение и не удаляйте образ. Отключение ядром может откладываться при сохранённых ссылках на устройство.
+**Ожидаемый результат:** строка `OK` проверки устройства, затем `OK: the training partition and path are unmounted.`, а последняя команда — без вывода. Если связь осталась, не продолжайте новое подключение и не удаляйте образ. Отключение ядром может откладываться при сохранённых ссылках на устройство.
 
 #### 10.3. Подключите тот же образ и сравните UUID
 
@@ -1029,18 +1065,22 @@ current=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
 #### 10.4. Примените автоматический отбор только нашей таблицы
 
 ```bash
-if [[ -n "$XFS_UUID" && "$XFS_CURRENT_UUID" = "$XFS_UUID" ]]; then
+XFS_EXPECTED_FSTAB="$(printf 'UUID=%s %s xfs defaults,noatime,nosuid,nodev,noexec 0 0' "$XFS_UUID" "$XFS_MNT")"
+if XFS_ACTUAL_FSTAB="$(cat "$XFS_FSTAB")" && [[ -n "$XFS_UUID" && "$XFS_CURRENT_UUID" = "$XFS_UUID" && "$XFS_ACTUAL_FSTAB" = "$XFS_EXPECTED_FSTAB" ]]; then
     xfs_check_device && sudo mount --all --fstab "$XFS_FSTAB" --types xfs --verbose
 else
-    printf '%s\n' 'STOP: the saved and current UUID do not match.'
+    printf '%s\n' 'STOP: UUID or the single expected fstab entry does not match.'
 fi
 ```
 
 | Элемент | Значение |
 | --- | --- |
 | `[[ -n "$XFS_UUID" ]]` | UUID непустой |
+| `XFS_EXPECTED_FSTAB="$(printf ...)"` | Формирует единственную разрешённую строку из сохранённых UUID и точки; `%s` подставляет строки |
+| `XFS_ACTUAL_FSTAB="$(cat ...)"` | Читает фактическую таблицу; при ошибке чтения дальнейшее условие не выполняется |
 | `&&` внутри условия | Обе проверки должны пройти |
 | `=` | UUID совпадают |
+| `"$XFS_ACTUAL_FSTAB" = "$XFS_EXPECTED_FSTAB"` | Таблица содержит именно нашу строку и не включает дополнительные записи |
 | `xfs_check_device &&` | Монтирование запускается только после проверки нашего устройства |
 | `mount --all` | Применяет подходящие записи таблицы, без ручного указания источника и точки в команде |
 | `--fstab "$XFS_FSTAB"` | Выбирает только наш отдельный файл вместо системного `/etc/fstab` |
@@ -1054,22 +1094,21 @@ OK: /dev/loop10p1 belongs to /var/tmp/astra-xfs-1000/disk.img
 /mnt/astra-xfs-1000: successfully mounted
 ```
 
-**Что должно получиться.** Система нашла нужную XFS по UUID из сохранённой таблицы и подключила её с параметрами этой строки. Это целевой аналог этапа применения конфигурации после появления диска.
+**Что должно получиться.** Система нашла нужную XFS по UUID из сохранённой таблицы и подключила её с параметрами этой строки. Проверка точного содержимого не позволяет применить случайно добавленные записи. Это целевой аналог этапа применения конфигурации после появления диска.
 
 Параметр `--fstab` здесь обязателен. Не заменяйте команду на общий `sudo mount -a`: он начнёт обрабатывать настоящий системный файл. И не считайте результат доказательством успешной перезагрузки: она не проводилась, а постоянное создание loop-связи не настраивалось.
 
 #### 10.5. Проверьте источник, noatime и данные
 
 ```bash
-xfs_check_mount
-findmnt --mountpoint "$XFS_MNT" --output SOURCE,TARGET,FSTYPE,OPTIONS
-sudo blkid "$XFS_PART"
-cd "$XFS_MNT/records"
-sha256sum -c SHA256SUMS
-cd "$HOME"
+if xfs_check_mount; then
+    findmnt --mountpoint "$XFS_MNT" --output SOURCE,TARGET,FSTYPE,OPTIONS
+    sudo blkid "$XFS_PART"
+    sha256sum -c "$XFS_MNT/records/SHA256SUMS"
+fi
 ```
 
-Функция подтверждает точное монтирование нашей XFS. `findmnt --mountpoint` выбирает именно его, `--output` задаёт столбцы. `blkid` показывает UUID текущего раздела. `cd` выбирает каталог, в котором ведомость содержит относительные имена; `sha256sum -c` сверяет контрольную сумму; последний `cd` возвращает домой.
+`if` допускает проверки только после подтверждения нашей XFS с `noatime`. `findmnt --mountpoint` выбирает точное монтирование, `--output` задаёт столбцы. `blkid` показывает UUID текущего раздела. `sha256sum -c` читает ведомость по полному пути и проверяет указанный в ней полный путь к журналу. Текущий каталог оболочки на результат не влияет.
 
 **Пример сокращённого результата:**
 
@@ -1079,7 +1118,7 @@ OK: ...
 SOURCE        TARGET               FSTYPE OPTIONS
 /dev/loop10p1 /mnt/astra-xfs-1000   xfs    rw,nosuid,nodev,noexec,noatime,...
 /dev/loop10p1: LABEL="X1000" UUID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" TYPE="xfs" ...
-journal.txt: OK
+/mnt/astra-xfs-1000/records/journal.txt: OK
 ```
 
 `findmnt` обычно показывает разрешённое имя устройства, а не текст `UUID=...`. Связку доказывают три наблюдения: строка модели с UUID, этот же UUID у раздела и фактическое монтирование с `noatime`. Один только `lsblk -f` не показывает все параметры монтирования.
@@ -1126,7 +1165,7 @@ UUID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee /mnt/astra-xfs-1000 xfs defaults,noati
 1. Строка модели `fstab` с вашим UUID.
 2. `blkid` для текущего loop-раздела с тем же UUID и типом `xfs`.
 3. `findmnt` для точной точки с `noatime` в параметрах.
-4. Успешная проверка `journal.txt: OK` после повторного подключения.
+4. Успешная проверка `/mnt/astra-xfs-ваш_UID/records/journal.txt: OK` после повторного подключения.
 
 При желании дополнительно сохраните сравнение `atime` из раздела 8. Скриншоты делаются на вашем компьютере; устанавливать графическую среду на сервер не нужно. Пароли, ключи SSH и реальные данные в подтверждение не включаются.
 
@@ -1169,8 +1208,20 @@ SOURCE        TARGET               FSTYPE OPTIONS
 XFS_LOOP="$(sudo losetup --list --noheadings --raw --output NAME --associated "$XFS_IMAGE")"
 if [[ "$XFS_LOOP" =~ ^/dev/loop[0-9]+$ ]]; then
     XFS_PART="${XFS_LOOP}p1"
-    XFS_UUID="$(sudo blkid -s UUID -o value "$XFS_PART")"
-    printf '%s\n' "$XFS_LOOP" "$XFS_PART" "$XFS_UUID"
+    XFS_CURRENT_UUID="$(sudo blkid -s UUID -o value "$XFS_PART")"
+    XFS_UUID=""
+    if [[ -f "$XFS_FSTAB" ]]; then
+        if read -r XFS_SAVED_SOURCE XFS_SAVED_REST < "$XFS_FSTAB"; then
+            XFS_UUID="${XFS_SAVED_SOURCE#UUID=}"
+        fi
+    else
+        XFS_UUID="$XFS_CURRENT_UUID"
+    fi
+    if [[ -n "$XFS_UUID" && "$XFS_CURRENT_UUID" = "$XFS_UUID" ]]; then
+        printf '%s\n' "$XFS_LOOP" "$XFS_PART" "saved=$XFS_UUID" "current=$XFS_CURRENT_UUID"
+    else
+        printf '%s\n' 'STOP: the current UUID differs from the saved model or could not be read.'
+    fi
 else
     printf '%s\n' 'STOP: expected one existing loop association.'
 fi
@@ -1178,17 +1229,24 @@ fi
 
 `--list` выбирает таблицу, `--noheadings --raw` убирают заголовок и выравнивание, `--output NAME` оставляет только имя, `--associated` ограничивает образ. Регулярное выражение принимает ровно одно имя вида `/dev/loopN`; пустое значение и несколько строк не подходят.
 
-`blkid -s UUID -o value` восстанавливает UUID существующей файловой системы. `printf` показывает значения.
+`blkid -s UUID -o value` читает текущий UUID. Если модель таблицы уже существует, исходный UUID берётся из неё, чтобы не заменить старое значение новым и не скрыть неожиданное изменение файловой системы.
+
+`-f` проверяет наличие обычного файла. `read -r` читает строку без специального толкования обратных косых черт: первое поле сохраняет в `XFS_SAVED_SOURCE`, остальные поля — в `XFS_SAVED_REST`. Перенаправление `<` подаёт файл на вход команды. Запись `${XFS_SAVED_SOURCE#UUID=}` убирает начальный текст `UUID=` и оставляет идентификатор. Файл не выполняется как сценарий.
+
+Если модель ещё не была создана, используется UUID существующей XFS. Условие `-n` проверяет непустое значение, `=` — совпадение. `printf` показывает текущую связь и оба значения UUID. Сообщение `STOP` означает, что продолжать монтирование до выяснения причины нельзя.
 
 **Пример результата:**
 
 ```text
 /dev/loop10
 /dev/loop10p1
-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+saved=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+current=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
 ```
 
 Заново определите функции блоками из разделов 4.3 и 6.2 части 2. Если файловая система не смонтирована, вторая проверка ожидаемо не подтвердит монтирование. Для существующей и подтверждённой XFS используйте только команду монтирования из раздела 6.1 либо сохранённую модель таблицы, без повторных `sfdisk` и `mkfs.xfs`.
+
+Для последующей проверки и отключения понадобится также функция `xfs_check_unmounted`: скопируйте первый блок из раздела 10.2, содержащий только её определение. Второй блок с `losetup --detach` при восстановлении не выполняйте: он нужен, когда вы действительно готовы отключить уже размонтированный образ.
 
 Если loop-связи нет, подключите существующий образ блоком из раздела 4.1, определите функцию проверки, прочитайте его UUID через `blkid` и проверьте совпадение с моделью. Затем монтируйте существующую XFS. Не перезаписывайте модель новым UUID, если он неожиданно отличается: сначала выясните причину.
 
@@ -1211,14 +1269,10 @@ xfs_check_mount && sudo umount "$XFS_MNT"
 #### 13.2. При необходимости проверьте XFS без исправлений
 
 ```bash
-if findmnt --noheadings --source "$XFS_PART"; then
-    printf '%s\n' 'STOP: unmount the training XFS before checking.'
-else
-    xfs_check_device && sudo xfs_repair -n "$XFS_PART"
-fi
+xfs_check_unmounted && sudo xfs_repair -n "$XFS_PART"
 ```
 
-`findmnt --source` с `--noheadings` ищет монтирования раздела. Если они есть, выполняется только сообщение об остановке. Иначе проверка принадлежности разрешает вызов `xfs_repair`.
+`xfs_check_unmounted` проверяет принадлежность устройства, возможность прочитать таблицу ядра и отсутствие монтирования раздела и точки. `&&` допускает запуск `xfs_repair` только после успешной проверки. При сообщении `STOP` проверка XFS не запускается.
 
 Флаг `-n` означает режим без изменений: инструмент исследует структуры и сообщает о предполагаемых исправлениях, но не выполняет их. Даже такую проверку проводим на размонтированной XFS. В зависимости от версии инструмент может потребовать дополнительные ресурсы; для маленького учебного образа объём ограничен размером раздела.
 
@@ -1226,6 +1280,7 @@ fi
 
 ```text
 OK: /dev/loop10p1 belongs to /var/tmp/astra-xfs-1000/disk.img
+OK: the training partition and path are unmounted.
 Phase 1 - find and verify superblock...
 Phase 2 - using internal log
 ...
@@ -1237,11 +1292,7 @@ No modify flag set, skipping filesystem flush and exiting.
 #### 13.3. Отключите loop и подтвердите отсутствие использования
 
 ```bash
-if findmnt --noheadings --source "$XFS_PART"; then
-    printf '%s\n' 'STOP: the training partition is still mounted.'
-else
-    xfs_check_device && sudo losetup --detach "$XFS_LOOP"
-fi
+xfs_check_unmounted && sudo losetup --detach "$XFS_LOOP"
 sudo udevadm settle --timeout=10
 sudo losetup --associated "$XFS_IMAGE"
 if mountpoint -q "$XFS_MNT"; then
@@ -1251,12 +1302,13 @@ else
 fi
 ```
 
-`findmnt` проверяет раздел, `losetup --detach` отключает одно проверенное устройство. `udevadm settle --timeout=10` ожидает события, `losetup --associated` показывает оставшиеся связи только образа. `mountpoint -q` отдельно проверяет точку без собственного текста, `if` выводит результат.
+`xfs_check_unmounted` проверяет принадлежность и отсутствие использования; `&&` допускает `losetup --detach` только после успеха. Отключается одно устройство. `udevadm settle --timeout=10` ожидает события, `losetup --associated` показывает оставшиеся связи только образа. `mountpoint -q` отдельно проверяет точку без собственного текста, `if` выводит результат.
 
 **Пример результата:**
 
 ```text
 OK: /dev/loop10p1 belongs to /var/tmp/astra-xfs-1000/disk.img
+OK: the training partition and path are unmounted.
 Training path is not mounted.
 ```
 
